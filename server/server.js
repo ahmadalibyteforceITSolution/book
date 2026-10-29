@@ -20,7 +20,8 @@ const Settings = require('./models/Settings');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://ahmedalihafeez25_db_user:%40Sublime12345@cluster0.oe0inne.mongodb.net/book?retryWrites=true&w=majority';
+const DIRECT_MONGO_URI = 'mongodb://ahmedalihafeez25_db_user:%40Sublime12345@ac-b095rvn-shard-00-00.oe0inne.mongodb.net:27017,ac-b095rvn-shard-00-01.oe0inne.mongodb.net:27017,ac-b095rvn-shard-00-02.oe0inne.mongodb.net:27017/book?ssl=true&authSource=admin&replicaSet=atlas-arfzx2-shard-0&retryWrites=true&w=majority';
+const MONGO_URI = process.env.MONGO_URI || DIRECT_MONGO_URI;
 
 app.use(cors());
 app.use(express.json());
