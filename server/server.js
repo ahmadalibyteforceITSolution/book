@@ -437,7 +437,14 @@ app.get('/api/categories', async (req, res) => {
 // 11. GET /api/covers/:filename - Serve covers
 app.get('/api/covers/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
-  const coverPath = path.join(COVERS_DIR, filename);
+  let coverPath = path.join(COVERS_DIR, filename);
+  if (!fs.existsSync(coverPath)) {
+    coverPath = path.join(__dirname, 'covers', filename);
+  }
+  if (!fs.existsSync(coverPath)) {
+    coverPath = path.join(ROOT_DIR, 'covers', filename);
+  }
+
   if (fs.existsSync(coverPath)) {
     res.sendFile(coverPath);
   } else {
@@ -456,7 +463,13 @@ app.get('/api/covers/:filename', (req, res) => {
 // 12. GET /api/pdfs/:filename - Serve & Stream PDF
 app.get('/api/pdfs/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
-  const pdfPath = path.join(ROOT_DIR, filename);
+  let pdfPath = path.join(ROOT_DIR, filename);
+  if (!fs.existsSync(pdfPath)) {
+    pdfPath = path.join(__dirname, filename);
+  }
+  if (!fs.existsSync(pdfPath)) {
+    pdfPath = path.join(process.cwd(), filename);
+  }
 
   if (!fs.existsSync(pdfPath)) {
     return res.status(404).send('فائل موجود نہیں ہے');
