@@ -692,10 +692,12 @@ app.get('/api/pdfs/:filename', (req, res) => {
 
 // Serve frontend static build if built
 const possibleDists = [
+  __dirname,
   path.join(__dirname, 'dist'),
   path.join(__dirname, '..', 'client', 'dist'),
   path.join(__dirname, '..', 'dist'),
-  path.join(process.cwd(), 'dist')
+  path.join(process.cwd(), 'dist'),
+  process.cwd()
 ];
 const CLIENT_DIST = possibleDists.find(d => fs.existsSync(path.join(d, 'index.html')));
 if (CLIENT_DIST) {
