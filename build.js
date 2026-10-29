@@ -39,31 +39,16 @@ if (fs.existsSync(clientDist)) {
     path.resolve(process.cwd(), 'dist')
   ];
 
+  const serverDir = fs.existsSync(path.resolve(__dirname, 'server')) 
+    ? path.resolve(__dirname, 'server') 
+    : (fs.existsSync(path.resolve(__dirname, '../server')) ? path.resolve(__dirname, '../server') : __dirname);
+
+  const serverJsSrc = path.join(serverDir, 'server.js');
+  const modelsSrc = path.join(serverDir, 'models');
+  const dataSrc = path.join(serverDir, 'data');
+
   const entryCode = `const express = require('express');
-const path = require('path');
-
-let app;
-const possibleServerPaths = [
-  path.resolve(__dirname, '../server.js'),
-  path.resolve(__dirname, '../../server/server.js'),
-  path.resolve(__dirname, '../server/server.js')
-];
-for (const p of possibleServerPaths) {
-  try {
-    const candidate = require(p);
-    if (candidate && (typeof candidate === 'function' || candidate.use)) {
-      app = candidate;
-      break;
-    }
-  } catch (e) {}
-}
-
-if (!app) {
-  app = express();
-  app.use(express.static(__dirname));
-  app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-}
-
+const app = require('./server.js');
 module.exports = app;
 `;
 
@@ -73,11 +58,23 @@ module.exports = app;
       if (target !== clientDist) {
         fs.cpSync(clientDist, target, { recursive: true });
       }
-      // Create index.js, server.js, app.js that explicitly import express
+
+      // Copy server.js, models, and data directly into dist so dist is 100% self-contained
+      if (fs.existsSync(serverJsSrc)) {
+        fs.copyFileSync(serverJsSrc, path.join(target, 'server.js'));
+      }
+      if (fs.existsSync(modelsSrc)) {
+        fs.cpSync(modelsSrc, path.join(target, 'models'), { recursive: true });
+      }
+      if (fs.existsSync(dataSrc)) {
+        fs.cpSync(dataSrc, path.join(target, 'data'), { recursive: true });
+      }
+
+      // Create index.js, app.js that require ./server.js
       fs.writeFileSync(path.join(target, 'index.js'), entryCode);
-      fs.writeFileSync(path.join(target, 'server.js'), entryCode);
       fs.writeFileSync(path.join(target, 'app.js'), entryCode);
-      console.log('Synced dist and generated express entrypoints in:', target);
+
+      console.log('Synced dist, bundled backend and express entrypoints in:', target);
     } catch (err) {
       console.error('Copy/entrypoint note:', err.message);
     }
