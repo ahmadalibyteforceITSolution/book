@@ -717,6 +717,27 @@ possibleDists.forEach(d => {
   }
 });
 
+// Explicit asset route ensuring JavaScript and CSS always serve with correct MIME types
+app.get('/assets/:filename', (req, res) => {
+  const filename = req.params.filename;
+  const assetPaths = [
+    path.join(__dirname, 'assets', filename),
+    path.join(__dirname, 'dist', 'assets', filename),
+    path.join(process.cwd(), 'assets', filename),
+    path.join(process.cwd(), 'dist', 'assets', filename),
+    path.join(process.cwd(), 'server', 'dist', 'assets', filename),
+    path.join(process.cwd(), 'client', 'dist', 'assets', filename)
+  ];
+  for (const p of assetPaths) {
+    if (fs.existsSync(p)) {
+      if (filename.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      if (filename.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
+      return res.sendFile(p);
+    }
+  }
+  res.status(404).send('Asset not found');
+});
+
 // Guaranteed embedded HTML fallback ensuring Express never gives 404 on /
 const EMBEDDED_HTML = `<!doctype html>
 <html dir="rtl" lang="ur">
