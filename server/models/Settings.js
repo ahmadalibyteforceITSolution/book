@@ -65,7 +65,8 @@ const settingsSchema = new mongoose.Schema({
   copyrightNote: { type: String, default: 'تمام کتب آپ کے کمپیوٹر کے لوکل پی ڈی ایف فولڈر سے براہ راست پیش کی جا رہی ہیں۔' }
 }, {
   timestamps: true,
-  collection: 'settings'
+  collection: 'settings',
+  bufferCommands: false
 });
 
 module.exports = mongoose.model('Settings', settingsSchema);

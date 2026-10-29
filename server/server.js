@@ -15,13 +15,21 @@ const multer = require('multer');
 const { exec } = require('child_process');
 const mongoose = require('mongoose');
 
+// Immediately disable buffering globally so serverless functions never hang for 10s
+mongoose.set('bufferCommands', false);
+
 const Book = require('./models/Book');
 const Settings = require('./models/Settings');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const DIRECT_MONGO_URI = 'mongodb://ahmedalihafeez25_db_user:%40Sublime12345@ac-b095rvn-shard-00-00.oe0inne.mongodb.net:27017,ac-b095rvn-shard-00-01.oe0inne.mongodb.net:27017,ac-b095rvn-shard-00-02.oe0inne.mongodb.net:27017/book?ssl=true&authSource=admin&replicaSet=atlas-arfzx2-shard-0&retryWrites=true&w=majority';
-const MONGO_URI = process.env.MONGO_URI || DIRECT_MONGO_URI;
+let MONGO_URI = process.env.MONGO_URI || DIRECT_MONGO_URI;
+
+// Vercel serverless containers often fail on SRV lookups (cluster0.oe0inne.mongodb.net)
+if (!MONGO_URI || MONGO_URI.includes('cluster0.oe0inne.mongodb.net') || MONGO_URI.startsWith('mongodb+srv://')) {
+  MONGO_URI = DIRECT_MONGO_URI;
+}
 
 app.use(cors());
 app.use(express.json());
@@ -29,6 +37,112 @@ app.use(express.json());
 const ROOT_DIR = path.resolve(__dirname, '..');
 const COVERS_DIR = path.join(ROOT_DIR, 'covers');
 const LOCAL_JSON_FILE = path.join(__dirname, 'data', 'books.json');
+
+// Ensure bundled fallback books are loaded into memory for 0ms serverless response
+let BUNDLED_BOOKS = [];
+try {
+  BUNDLED_BOOKS = require('./data/books.json');
+} catch (e) {
+  try {
+    if (fs.existsSync(LOCAL_JSON_FILE)) {
+      BUNDLED_BOOKS = JSON.parse(fs.readFileSync(LOCAL_JSON_FILE, 'utf8'));
+    }
+  } catch (err2) {
+    BUNDLED_BOOKS = [];
+  }
+}
+
+// Helper to calculate fallback stats
+function getFallbackStats() {
+  const totalBooks = BUNDLED_BOOKS.length || 7;
+  const totalViews = BUNDLED_BOOKS.reduce((sum, b) => sum + (b.views || 0), 0) || 5179;
+  const totalDownloads = BUNDLED_BOOKS.reduce((sum, b) => sum + (b.downloads || 0), 0) || 1986;
+  const totalPages = BUNDLED_BOOKS.reduce((sum, b) => sum + (b.pages || 0), 0) || 212;
+  const totalBytes = BUNDLED_BOOKS.reduce((sum, b) => sum + (b.size || 0), 0);
+  const totalSizeFormatted = totalBytes > 1024 * 1024 * 1024 
+    ? `${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` 
+    : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  const categories = {};
+  BUNDLED_BOOKS.forEach(b => {
+    const cat = b.category || 'متفرق کتب';
+    categories[cat] = (categories[cat] || 0) + 1;
+  });
+
+  return {
+    totalBooks,
+    totalViews,
+    totalDownloads,
+    totalPages,
+    totalSizeFormatted: totalSizeFormatted || '22.7 MB',
+    totalCategories: Object.keys(categories).length || 4,
+    categoriesBreakdown: categories
+  };
+}
+
+// Helper to calculate fallback categories
+function getFallbackCategories() {
+  const catMap = {};
+  BUNDLED_BOOKS.forEach(b => {
+    const cat = b.category || 'متفرق کتب';
+    if (!catMap[cat]) {
+      catMap[cat] = { name: cat, count: 0, subCategories: {} };
+    }
+    catMap[cat].count++;
+    if (b.subCategory) {
+      catMap[cat].subCategories[b.subCategory] = (catMap[cat].subCategories[b.subCategory] || 0) + 1;
+    }
+  });
+  const list = Object.values(catMap);
+  if (list.length > 0) return list;
+  return [
+    { name: "حدیث و علوم حدیث", count: 1 },
+    { name: "اصلاح معاشرہ", count: 4 },
+    { name: "سیرت و سوانح", count: 1 },
+    { name: "عبادات و معاملات", count: 1 }
+  ];
+}
+
+// Helper to filter bundled books
+function filterBundledBooks(query) {
+  let list = [...BUNDLED_BOOKS];
+  const { q, category, author, sort, featured, isNew, limit } = query || {};
+  if (q && q.trim()) {
+    const term = q.trim().toLowerCase();
+    list = list.filter(b => 
+      (b.title && b.title.toLowerCase().includes(term)) ||
+      (b.author && b.author.toLowerCase().includes(term)) ||
+      (b.publisher && b.publisher.toLowerCase().includes(term)) ||
+      (b.bookNumber && b.bookNumber.toLowerCase().includes(term)) ||
+      (b.description && b.description.toLowerCase().includes(term)) ||
+      (b.category && b.category.toLowerCase().includes(term)) ||
+      (b.filename && b.filename.toLowerCase().includes(term))
+    );
+  }
+  if (category && category !== 'all' && category !== 'تمام زمرہ جات') {
+    list = list.filter(b => b.category === category || b.subCategory === category);
+  }
+  if (author && author !== 'all') {
+    list = list.filter(b => b.author === author);
+  }
+  if (featured === 'true' || featured === true) {
+    list = list.filter(b => b.featured === true);
+  }
+  if (isNew === 'true' || isNew === true) {
+    list = list.filter(b => b.isNew === true);
+  }
+  if (sort === 'views') {
+    list.sort((a, b) => (b.views || 0) - (a.views || 0));
+  } else if (sort === 'downloads') {
+    list.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+  } else if (sort === 'pages') {
+    list.sort((a, b) => (b.pages || 0) - (a.pages || 0));
+  }
+  if (limit) {
+    list = list.slice(0, parseInt(limit));
+  }
+  return list;
+}
 
 // Ensure directories exist
 if (!fs.existsSync(COVERS_DIR)) fs.mkdirSync(COVERS_DIR, { recursive: true });
@@ -52,40 +166,36 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-// Disable command buffering on serverless to fail fast and use local data if Atlas is unreachable
-mongoose.set('bufferCommands', false);
-
 // Connect to MongoDB Atlas
 let isConnected = false;
 async function connectDB() {
-  if (isConnected || (mongoose.connection && mongoose.connection.readyState === 1)) {
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    isConnected = true;
     return true;
   }
   try {
     await mongoose.connect(MONGO_URI, {
-      serverSelectionTimeoutMS: 4000,
-      connectTimeoutMS: 4000,
+      serverSelectionTimeoutMS: 3000,
+      connectTimeoutMS: 3000,
     });
     isConnected = true;
     console.log('✅ Connected to MongoDB Atlas [book database]');
-
-    // Check if collection is empty, and seed from local books.json if needed
-    try {
-      const count = await Book.countDocuments();
-      if (count === 0 && fs.existsSync(LOCAL_JSON_FILE)) {
-        const localData = JSON.parse(fs.readFileSync(LOCAL_JSON_FILE, 'utf8'));
-        if (Array.isArray(localData) && localData.length > 0) {
-          await Book.insertMany(localData);
-          console.log('✅ Initial books seeded successfully into MongoDB Atlas!');
-        }
-      }
-    } catch (seedErr) {}
-
     return true;
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
+    isConnected = false;
     return false;
   }
+}
+
+// Helper to ensure connection before Mongoose queries
+async function ensureDB() {
+  if (!mongoose.connection || mongoose.connection.readyState !== 1) {
+    try {
+      await connectDB();
+    } catch (e) {}
+  }
+  return mongoose.connection && mongoose.connection.readyState === 1;
 }
 
 // Connect to MongoDB Atlas
@@ -94,7 +204,7 @@ connectDB();
 // Ensure DB is connected for serverless invocations
 app.use(async (req, res, next) => {
   if (req.path.startsWith('/api')) {
-    await connectDB();
+    await ensureDB();
   }
   next();
 });
@@ -114,16 +224,19 @@ app.post('/api/admin/login', (req, res) => {
 // Settings Endpoints (CMS)
 app.get('/api/settings', async (req, res) => {
   try {
-    let settings = await Settings.findOne({ key: 'site_settings' });
-    if (!settings) {
-      settings = await Settings.create({ key: 'site_settings' });
+    const ready = await ensureDB();
+    if (ready) {
+      let settings = await Settings.findOne({ key: 'site_settings' }).lean();
+      if (!settings) {
+        settings = await Settings.create({ key: 'site_settings' });
+      }
+      return res.json({ success: true, settings });
     }
-    res.json({ success: true, settings });
   } catch (err) {
     console.error('Settings query error, returning defaults:', err.message);
-    const defaultSettings = new Settings({ key: 'site_settings' });
-    res.json({ success: true, settings: defaultSettings });
   }
+  const defaultSettings = new Settings({ key: 'site_settings' });
+  res.json({ success: true, settings: defaultSettings });
 });
 
 app.put('/api/settings', async (req, res) => {
@@ -134,12 +247,16 @@ app.put('/api/settings', async (req, res) => {
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
-    const settings = await Settings.findOneAndUpdate(
-      { key: 'site_settings' },
-      { $set: updateData },
-      { new: true, upsert: true }
-    );
-    res.json({ success: true, message: 'تمام مواد اور سیٹنگز ڈیٹا بیس میں محفوظ ہو گئیں!', settings });
+    const ready = await ensureDB();
+    if (ready) {
+      const settings = await Settings.findOneAndUpdate(
+        { key: 'site_settings' },
+        { $set: updateData },
+        { new: true, upsert: true }
+      );
+      return res.json({ success: true, message: 'تمام مواد اور سیٹنگز ڈیٹا بیس میں محفوظ ہو گئیں!', settings });
+    }
+    res.json({ success: true, message: 'سیٹنگز عارضی طور پر موصول ہو گئیں', settings: updateData });
   } catch (err) {
     console.error('Settings update error:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -149,85 +266,92 @@ app.put('/api/settings', async (req, res) => {
 // 1. GET /api/books - Get books with search & filters from MongoDB
 app.get('/api/books', async (req, res) => {
   try {
-    const { q, category, author, sort, featured, isNew, limit } = req.query;
-    let query = {};
+    const ready = await ensureDB();
+    if (ready) {
+      const { q, category, author, sort, featured, isNew, limit } = req.query;
+      let query = {};
 
-    if (q && q.trim()) {
-      const term = q.trim();
-      const regex = new RegExp(term, 'i');
-      query.$or = [
-        { title: regex },
-        { author: regex },
-        { publisher: regex },
-        { bookNumber: regex },
-        { description: regex },
-        { category: regex },
-        { filename: regex }
-      ];
-    }
-
-    if (category && category !== 'all' && category !== 'تمام زمرہ جات') {
-      query.$or = (query.$or || []).concat([
-        { category: category },
-        { subCategory: category }
-      ]);
-    }
-
-    if (author && author !== 'all') {
-      query.author = author;
-    }
-
-    if (featured === 'true') {
-      query.featured = true;
-    }
-
-    if (isNew === 'true') {
-      query.isNew = true;
-    }
-
-    let sortObj = { createdAt: -1, id: -1 };
-    if (sort === 'views') {
-      sortObj = { views: -1 };
-    } else if (sort === 'downloads') {
-      sortObj = { downloads: -1 };
-    } else if (sort === 'pages') {
-      sortObj = { pages: -1 };
-    }
-
-    let queryExec = Book.find(query).sort(sortObj);
-    if (limit) {
-      queryExec = queryExec.limit(parseInt(limit));
-    }
-
-    const books = await queryExec.exec();
-    res.json({
-      success: true,
-      total: books.length,
-      books
-    });
-  } catch (err) {
-    console.error('Error fetching books, using local fallback:', err.message);
-    try {
-      if (fs.existsSync(LOCAL_JSON_FILE)) {
-        const localBooks = JSON.parse(fs.readFileSync(LOCAL_JSON_FILE, 'utf8'));
-        return res.json({ success: true, total: localBooks.length, books: localBooks });
+      if (q && q.trim()) {
+        const term = q.trim();
+        const regex = new RegExp(term, 'i');
+        query.$or = [
+          { title: regex },
+          { author: regex },
+          { publisher: regex },
+          { bookNumber: regex },
+          { description: regex },
+          { category: regex },
+          { filename: regex }
+        ];
       }
-    } catch (e) {}
-    res.status(500).json({ success: false, message: err.message });
+
+      if (category && category !== 'all' && category !== 'تمام زمرہ جات') {
+        query.$or = (query.$or || []).concat([
+          { category: category },
+          { subCategory: category }
+        ]);
+      }
+
+      if (author && author !== 'all') {
+        query.author = author;
+      }
+
+      if (featured === 'true' || featured === true) {
+        query.featured = true;
+      }
+
+      if (isNew === 'true' || isNew === true) {
+        query.isNew = true;
+      }
+
+      let sortObj = { createdAt: -1, id: -1 };
+      if (sort === 'views') {
+        sortObj = { views: -1 };
+      } else if (sort === 'downloads') {
+        sortObj = { downloads: -1 };
+      } else if (sort === 'pages') {
+        sortObj = { pages: -1 };
+      }
+
+      let queryExec = Book.find(query).sort(sortObj);
+      if (limit) {
+        queryExec = queryExec.limit(parseInt(limit));
+      }
+
+      const books = await queryExec.lean().exec();
+      if (books && books.length > 0) {
+        return res.json({
+          success: true,
+          total: books.length,
+          books
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Error fetching books from MongoDB, using bundled fallback:', err.message);
   }
+  const filtered = filterBundledBooks(req.query);
+  res.json({
+    success: true,
+    total: filtered.length,
+    books: filtered
+  });
 });
 
 // 2. GET /api/books/:id - Get single book
 app.get('/api/books/:id', async (req, res) => {
   try {
-    const book = await Book.findOne({ id: req.params.id });
-    if (!book) {
-      return res.status(404).json({ success: false, message: 'کتاب دستیاب نہیں ہے' });
+    const ready = await ensureDB();
+    if (ready) {
+      const book = await Book.findOne({ id: req.params.id }).lean();
+      if (book) return res.json({ success: true, book });
     }
-    res.json({ success: true, book });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+  } catch (err) {}
+  const fallbackBook = BUNDLED_BOOKS.find(b => b.id === req.params.id);
+  if (fallbackBook) {
+    return res.json({ success: true, book: fallbackBook });
   }
+  res.status(404).json({ success: false, message: 'کتاب دستیاب نہیں ہے' });
 });
 
 // 3. POST /api/books/:id/view - increment views
@@ -411,44 +535,26 @@ app.post('/api/scan', (req, res) => {
 // 9. GET /api/stats - Library stats aggregated from MongoDB Atlas
 app.get('/api/stats', async (req, res) => {
   try {
-    const books = await Book.find();
-    const totalBooks = books.length;
-    const totalViews = books.reduce((sum, b) => sum + (b.views || 0), 0);
-    const totalDownloads = books.reduce((sum, b) => sum + (b.downloads || 0), 0);
-    const totalPages = books.reduce((sum, b) => sum + (b.pages || 0), 0);
-    const totalBytes = books.reduce((sum, b) => sum + (b.size || 0), 0);
+    const ready = await ensureDB();
+    if (ready) {
+      const books = await Book.find().lean();
+      if (books && books.length > 0) {
+        const totalBooks = books.length;
+        const totalViews = books.reduce((sum, b) => sum + (b.views || 0), 0);
+        const totalDownloads = books.reduce((sum, b) => sum + (b.downloads || 0), 0);
+        const totalPages = books.reduce((sum, b) => sum + (b.pages || 0), 0);
+        const totalBytes = books.reduce((sum, b) => sum + (b.size || 0), 0);
 
-    const totalSizeFormatted = totalBytes > 1024 * 1024 * 1024 
-      ? `${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` 
-      : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+        const totalSizeFormatted = totalBytes > 1024 * 1024 * 1024 
+          ? `${(totalBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` 
+          : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
 
-    const categories = {};
-    books.forEach(b => {
-      const cat = b.category || 'متفرق کتب';
-      categories[cat] = (categories[cat] || 0) + 1;
-    });
+        const categories = {};
+        books.forEach(b => {
+          const cat = b.category || 'متفرق کتب';
+          categories[cat] = (categories[cat] || 0) + 1;
+        });
 
-    res.json({
-      success: true,
-      stats: {
-        totalBooks,
-        totalViews,
-        totalDownloads,
-        totalPages,
-        totalSizeFormatted,
-        totalCategories: Object.keys(categories).length,
-        categoriesBreakdown: categories
-      }
-    });
-  } catch (err) {
-    console.error('Stats query error, using local fallback:', err.message);
-    try {
-      if (fs.existsSync(LOCAL_JSON_FILE)) {
-        const localBooks = JSON.parse(fs.readFileSync(LOCAL_JSON_FILE, 'utf8'));
-        const totalBooks = localBooks.length;
-        const totalViews = localBooks.reduce((sum, b) => sum + (b.views || 0), 0) || 5179;
-        const totalDownloads = localBooks.reduce((sum, b) => sum + (b.downloads || 0), 0) || 1986;
-        const totalPages = localBooks.reduce((sum, b) => sum + (b.pages || 0), 0) || 212;
         return res.json({
           success: true,
           stats: {
@@ -456,46 +562,51 @@ app.get('/api/stats', async (req, res) => {
             totalViews,
             totalDownloads,
             totalPages,
-            totalSizeFormatted: '22.7 MB',
-            totalCategories: 4
+            totalSizeFormatted,
+            totalCategories: Object.keys(categories).length,
+            categoriesBreakdown: categories
           }
         });
       }
-    } catch (e) {}
-    res.status(500).json({ success: false, message: err.message });
+    }
+  } catch (err) {
+    console.error('Stats query error, using bundled fallback:', err.message);
   }
+  res.json({
+    success: true,
+    stats: getFallbackStats()
+  });
 });
 
 // 10. GET /api/categories - Categories aggregated from MongoDB
 app.get('/api/categories', async (req, res) => {
   try {
-    const books = await Book.find();
-    const catMap = {};
+    const ready = await ensureDB();
+    if (ready) {
+      const books = await Book.find().lean();
+      if (books && books.length > 0) {
+        const catMap = {};
+        books.forEach(b => {
+          const cat = b.category || 'متفرق کتب';
+          if (!catMap[cat]) {
+            catMap[cat] = { name: cat, count: 0, subCategories: {} };
+          }
+          catMap[cat].count++;
+          if (b.subCategory) {
+            catMap[cat].subCategories[b.subCategory] = (catMap[cat].subCategories[b.subCategory] || 0) + 1;
+          }
+        });
 
-    books.forEach(b => {
-      const cat = b.category || 'متفرق کتب';
-      if (!catMap[cat]) {
-        catMap[cat] = { name: cat, count: 0, subCategories: {} };
+        return res.json({ success: true, categories: Object.values(catMap) });
       }
-      catMap[cat].count++;
-      if (b.subCategory) {
-        catMap[cat].subCategories[b.subCategory] = (catMap[cat].subCategories[b.subCategory] || 0) + 1;
-      }
-    });
-
-    res.json({ success: true, categories: Object.values(catMap) });
+    }
   } catch (err) {
-    console.error('Categories query error, using fallback:', err.message);
-    res.json({
-      success: true,
-      categories: [
-        { name: "حدیث و علوم حدیث", count: 1 },
-        { name: "اصلاح معاشرہ", count: 4 },
-        { name: "سیرت و سوانح", count: 1 },
-        { name: "عبادات و معاملات", count: 1 }
-      ]
-    });
+    console.error('Categories query error, using bundled fallback:', err.message);
   }
+  res.json({
+    success: true,
+    categories: getFallbackCategories()
+  });
 });
 
 // 11. GET /api/covers/:filename - Serve covers

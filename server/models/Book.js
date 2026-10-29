@@ -78,6 +78,7 @@ const bookSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   collection: 'book', // Explicitly match user's MongoDB Compass collection 'book'
+  bufferCommands: false,
   suppressReservedKeysWarning: true
 });
 

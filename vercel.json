@@ -11,5 +11,11 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
-  ]
+  ],
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 15,
+      "includeFiles": "server/data/**"
+    }
+  }
 }
