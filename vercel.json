@@ -1,25 +1,15 @@
 {
-  "services": {
-    "client": {
-      "root": "client"
-    },
-    "server": {
-      "root": "server",
-      "entrypoint": "server.js"
-    }
-  },
+  "version": 2,
+  "buildCommand": "node -e \"if (require('fs').existsSync('client')) { require('child_process').execSync('npm run build --prefix client', {stdio:'inherit'}); } else { require('child_process').execSync('npm run build', {stdio:'inherit'}); }\"",
+  "outputDirectory": "client/dist",
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": {
-        "service": "server"
-      }
+      "destination": "/api/index.js"
     },
     {
       "source": "/(.*)",
-      "destination": {
-        "service": "client"
-      }
+      "destination": "/index.html"
     }
   ]
 }

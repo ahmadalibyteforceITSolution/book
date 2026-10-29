@@ -1,6 +1,10 @@
 const dns = require('dns');
-// Set public DNS for reliable MongoDB Atlas SRV record resolution on Windows
-dns.setServers(['8.8.8.8', '1.1.1.1']);
+// Set public DNS for reliable MongoDB Atlas SRV record resolution on Windows only
+try {
+  if (process.platform === 'win32') {
+    dns.setServers(['8.8.8.8', '1.1.1.1']);
+  }
+} catch (e) {}
 
 require('dotenv').config();
 const express = require('express');
@@ -48,11 +52,16 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // Connect to MongoDB Atlas
+let isConnected = false;
 async function connectDB() {
+  if (isConnected || (mongoose.connection && mongoose.connection.readyState >= 1)) {
+    return;
+  }
   try {
     await mongoose.connect(MONGO_URI, {
       serverSelectionTimeoutMS: 10000,
     });
+    isConnected = true;
     console.log('✅ Connected to MongoDB Atlas [book database]');
 
     // Check if collection is empty, and seed from local books.json if needed
@@ -78,6 +87,14 @@ async function connectDB() {
 
 // Connect to MongoDB Atlas
 connectDB();
+
+// Ensure DB is connected for serverless invocations
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    await connectDB();
+  }
+  next();
+});
 
 // 0. POST /api/admin/login - Secure owner login
 app.post('/api/admin/login', (req, res) => {
