@@ -691,10 +691,17 @@ app.get('/api/pdfs/:filename', (req, res) => {
 });
 
 // Serve frontend static build if built
-const CLIENT_DIST = path.join(__dirname, '..', 'client', 'dist');
-if (fs.existsSync(CLIENT_DIST)) {
+const possibleDists = [
+  path.join(__dirname, 'dist'),
+  path.join(__dirname, '..', 'client', 'dist'),
+  path.join(__dirname, '..', 'dist'),
+  path.join(process.cwd(), 'dist')
+];
+const CLIENT_DIST = possibleDists.find(d => fs.existsSync(path.join(d, 'index.html')));
+if (CLIENT_DIST) {
   app.use(express.static(CLIENT_DIST));
-  app.get('*', (req, res) => {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 }

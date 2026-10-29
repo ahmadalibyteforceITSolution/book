@@ -39,15 +39,36 @@ if (fs.existsSync(clientDist)) {
     path.resolve(process.cwd(), 'dist')
   ];
 
+  const entryCode = `// Vercel Serverless Entrypoint
+const path = require('path');
+let app;
+const possibleServerPaths = [
+  path.resolve(__dirname, '../server.js'),
+  path.resolve(__dirname, '../../server/server.js'),
+  path.resolve(__dirname, '../server/server.js')
+];
+for (const p of possibleServerPaths) {
+  try {
+    app = require(p);
+    if (app) break;
+  } catch (e) {}
+}
+module.exports = app;
+`;
+
   targetDirs.forEach(target => {
-    if (target !== clientDist) {
-      try {
-        fs.mkdirSync(target, { recursive: true });
+    try {
+      fs.mkdirSync(target, { recursive: true });
+      if (target !== clientDist) {
         fs.cpSync(clientDist, target, { recursive: true });
-        console.log('Synced dist to:', target);
-      } catch (err) {
-        // Ignore copy errors
       }
+      // Create index.js, server.js, app.js so Vercel Node entrypoint search always succeeds
+      fs.writeFileSync(path.join(target, 'index.js'), entryCode);
+      fs.writeFileSync(path.join(target, 'server.js'), entryCode);
+      fs.writeFileSync(path.join(target, 'app.js'), entryCode);
+      console.log('Synced dist and generated entrypoints in:', target);
+    } catch (err) {
+      console.error('Copy/entrypoint note:', err.message);
     }
   });
 }
