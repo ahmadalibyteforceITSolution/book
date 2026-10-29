@@ -286,23 +286,32 @@ import AdminPanel from './components/AdminPanel.vue';
 import OwnerLogin from './components/OwnerLogin.vue';
 import Footer from './components/Footer.vue';
 
-const books = ref([]);
-const categories = ref([]);
-const stats = ref({
+function getCached(key, fallback) {
+  try {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+const books = ref(getCached('cached_books', []));
+const categories = ref(getCached('cached_categories', []));
+const stats = ref(getCached('cached_stats', {
   totalBooks: 0,
   totalViews: 0,
   totalDownloads: 0,
   totalPages: 0,
   totalSizeFormatted: '0 MB'
-});
+}));
 
-const siteSettings = ref({});
+const siteSettings = ref(getCached('cached_settings', {}));
 
 const activeTab = ref('home');
 
 // Routing: Check for #/admin or /admin
 const currentRoute = ref(window.location.hash || window.location.pathname);
-const isOwnerAuthenticated = ref(sessionStorage.getItem('owner_authenticated') === 'true');
+const isOwnerAuthenticated = ref(localStorage.getItem('owner_authenticated') === 'true');
 
 const isAdminRoute = computed(() => {
   return currentRoute.value.includes('admin');
@@ -317,12 +326,12 @@ window.addEventListener('popstate', updateRoute);
 
 function onOwnerLoginSuccess() {
   isOwnerAuthenticated.value = true;
-  sessionStorage.setItem('owner_authenticated', 'true');
+  localStorage.setItem('owner_authenticated', 'true');
 }
 
 function onOwnerLogout() {
   isOwnerAuthenticated.value = false;
-  sessionStorage.removeItem('owner_authenticated');
+  localStorage.removeItem('owner_authenticated');
   window.location.hash = '';
   currentRoute.value = '/';
 }
@@ -352,6 +361,7 @@ async function fetchSettings() {
     const data = await res.json();
     if (data.success && data.settings) {
       siteSettings.value = data.settings;
+      try { localStorage.setItem('cached_settings', JSON.stringify(data.settings)); } catch (e) {}
     }
   } catch (err) {
     console.error('Settings fetch error:', err);
@@ -369,13 +379,22 @@ async function fetchAllData() {
     ]);
 
     const booksData = await booksRes.json();
-    if (booksData.success) books.value = booksData.books;
+    if (booksData.success) {
+      books.value = booksData.books;
+      try { localStorage.setItem('cached_books', JSON.stringify(booksData.books)); } catch (e) {}
+    }
 
     const catsData = await catsRes.json();
-    if (catsData.success) categories.value = catsData.categories;
+    if (catsData.success) {
+      categories.value = catsData.categories;
+      try { localStorage.setItem('cached_categories', JSON.stringify(catsData.categories)); } catch (e) {}
+    }
 
     const statsData = await statsRes.json();
-    if (statsData.success) stats.value = statsData.stats;
+    if (statsData.success) {
+      stats.value = statsData.stats;
+      try { localStorage.setItem('cached_stats', JSON.stringify(statsData.stats)); } catch (e) {}
+    }
   } catch (err) {
     console.error('Data fetch error:', err);
   }

@@ -123,14 +123,20 @@ app.get('/api/settings', async (req, res) => {
 
 app.put('/api/settings', async (req, res) => {
   try {
-    let settings = await Settings.findOne({ key: 'site_settings' });
-    if (!settings) {
-      settings = new Settings({ key: 'site_settings' });
-    }
-    Object.assign(settings, req.body);
-    await settings.save();
+    const updateData = { ...req.body };
+    delete updateData._id;
+    delete updateData.__v;
+    delete updateData.createdAt;
+    delete updateData.updatedAt;
+
+    const settings = await Settings.findOneAndUpdate(
+      { key: 'site_settings' },
+      { $set: updateData },
+      { new: true, upsert: true }
+    );
     res.json({ success: true, message: 'تمام مواد اور سیٹنگز ڈیٹا بیس میں محفوظ ہو گئیں!', settings });
   } catch (err) {
+    console.error('Settings update error:', err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
