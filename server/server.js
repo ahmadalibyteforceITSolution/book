@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { exec } = require('child_process');
+const https = require('https');
 const mongoose = require('mongoose');
 
 // Immediately disable buffering globally so serverless functions never hang for 10s
@@ -612,82 +613,119 @@ app.get('/api/categories', async (req, res) => {
 // 11. GET /api/covers/:filename - Serve covers
 app.get('/api/covers/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
-  let coverPath = path.join(COVERS_DIR, filename);
-  if (!fs.existsSync(coverPath)) {
-    coverPath = path.join(__dirname, 'covers', filename);
-  }
-  if (!fs.existsSync(coverPath)) {
-    coverPath = path.join(ROOT_DIR, 'covers', filename);
+  const possibleCoverPaths = [
+    path.join(COVERS_DIR, filename),
+    path.join(__dirname, 'covers', filename),
+    path.join(ROOT_DIR, 'covers', filename),
+    path.join(process.cwd(), 'covers', filename),
+    path.join(process.cwd(), 'server', 'covers', filename)
+  ];
+
+  const localCover = possibleCoverPaths.find(p => fs.existsSync(p));
+  if (localCover) {
+    return res.sendFile(localCover);
   }
 
-  if (fs.existsSync(coverPath)) {
-    res.sendFile(coverPath);
-  } else {
-    res.setHeader('Content-Type', 'image/svg+xml');
-    res.send(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="300" height="420" viewBox="0 0 300 420">
-        <rect width="300" height="420" rx="8" fill="#0c5332"/>
-        <rect x="15" y="15" width="270" height="390" rx="6" fill="none" stroke="#d4af37" stroke-width="2"/>
-        <text x="150" y="180" font-family="sans-serif" font-size="20" fill="#ffffff" text-anchor="middle" font-weight="bold">اردو E-Books</text>
-        <text x="150" y="220" font-family="sans-serif" font-size="14" fill="#d4af37" text-anchor="middle">کتاب و سنت لائبریری</text>
-      </svg>
-    `);
-  }
+  // Fallback to streaming cover from GitHub repository
+  const ghCoverUrl = `https://raw.githubusercontent.com/ahmadalibyteforceITSolution/book/main/covers/${encodeURIComponent(filename)}`;
+  https.get(ghCoverUrl, (ghRes) => {
+    if (ghRes.statusCode === 200) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      return ghRes.pipe(res);
+    }
+    sendDefaultSvgCover(res);
+  }).on('error', () => {
+    sendDefaultSvgCover(res);
+  });
 });
 
-// 12. GET /api/pdfs/:filename - Serve & Stream PDF
+function sendDefaultSvgCover(res) {
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.send(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="300" height="420" viewBox="0 0 300 420">
+      <rect width="300" height="420" rx="8" fill="#0c5332"/>
+      <rect x="15" y="15" width="270" height="390" rx="6" fill="none" stroke="#d4af37" stroke-width="2"/>
+      <text x="150" y="180" font-family="sans-serif" font-size="20" fill="#ffffff" text-anchor="middle" font-weight="bold">اردو E-Books</text>
+      <text x="150" y="220" font-family="sans-serif" font-size="14" fill="#d4af37" text-anchor="middle">کتاب و سنت لائبریری</text>
+    </svg>
+  `);
+}
+
+// 12. GET /api/pdfs/:filename - Serve & Stream PDF (Local Disk + GitHub Raw CDN Failover)
 app.get('/api/pdfs/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
-  let pdfPath = path.join(ROOT_DIR, filename);
-  if (!fs.existsSync(pdfPath)) {
-    pdfPath = path.join(__dirname, filename);
-  }
-  if (!fs.existsSync(pdfPath)) {
-    pdfPath = path.join(process.cwd(), filename);
-  }
+  const possiblePaths = [
+    path.join(ROOT_DIR, filename),
+    path.join(__dirname, filename),
+    path.join(__dirname, '..', filename),
+    path.join(process.cwd(), filename),
+    path.join(process.cwd(), 'server', filename),
+    path.join(__dirname, 'server', filename)
+  ];
 
-  if (!fs.existsSync(pdfPath)) {
-    return res.status(404).send('فائل موجود نہیں ہے');
-  }
-
-  const stat = fs.statSync(pdfPath);
-  const fileSize = stat.size;
-  const range = req.headers.range;
+  const localPdfPath = possiblePaths.find(p => fs.existsSync(p));
 
   const download = req.query.download === '1' || req.query.download === 'true';
   const encodedName = encodeURIComponent(filename);
 
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Accept-Ranges', 'bytes');
   if (download) {
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedName}`);
   } else {
     res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodedName}`);
   }
 
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Accept-Ranges', 'bytes');
+  // 1. If found on local disk, stream with range support
+  if (localPdfPath) {
+    const stat = fs.statSync(localPdfPath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
 
-  if (range) {
-    const parts = range.replace(/bytes=/, "").split("-");
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const chunksize = (end - start) + 1;
-    const file = fs.createReadStream(pdfPath, { start, end });
-    const head = {
-      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunksize,
-      'Content-Type': 'application/pdf',
-    };
-    res.writeHead(206, head);
-    file.pipe(res);
-  } else {
-    const head = {
-      'Content-Length': fileSize,
-      'Content-Type': 'application/pdf',
-    };
-    res.writeHead(200, head);
-    fs.createReadStream(pdfPath).pipe(res);
+    if (range) {
+      const parts = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunksize = (end - start) + 1;
+      const file = fs.createReadStream(localPdfPath, { start, end });
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': 'application/pdf',
+      });
+      return file.pipe(res);
+    } else {
+      res.setHeader('Content-Length', fileSize);
+      return fs.createReadStream(localPdfPath).pipe(res);
+    }
   }
+
+  // 2. If running on Vercel Serverless where local files might not be in lambda package, stream from GitHub Raw CDN
+  const githubUrls = [
+    `https://raw.githubusercontent.com/ahmadalibyteforceITSolution/book/main/${encodeURIComponent(filename)}`,
+    `https://raw.githubusercontent.com/ahmadalibyteforceITSolution/book/main/server/${encodeURIComponent(filename)}`
+  ];
+
+  function fetchFromGitHub(index) {
+    if (index >= githubUrls.length) {
+      return res.status(404).send('فائل دستیاب نہیں ہے');
+    }
+    const url = githubUrls[index];
+    https.get(url, (ghRes) => {
+      if (ghRes.statusCode === 200) {
+        if (ghRes.headers['content-length']) {
+          res.setHeader('Content-Length', ghRes.headers['content-length']);
+        }
+        return ghRes.pipe(res);
+      }
+      fetchFromGitHub(index + 1);
+    }).on('error', () => {
+      fetchFromGitHub(index + 1);
+    });
+  }
+
+  fetchFromGitHub(0);
 });
 
 // Serve frontend static build if built
