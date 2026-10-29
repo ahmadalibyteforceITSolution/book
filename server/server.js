@@ -51,37 +51,39 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+// Disable command buffering on serverless to fail fast and use local data if Atlas is unreachable
+mongoose.set('bufferCommands', false);
+
 // Connect to MongoDB Atlas
 let isConnected = false;
 async function connectDB() {
-  if (isConnected || (mongoose.connection && mongoose.connection.readyState >= 1)) {
-    return;
+  if (isConnected || (mongoose.connection && mongoose.connection.readyState === 1)) {
+    return true;
   }
   try {
     await mongoose.connect(MONGO_URI, {
-      serverSelectionTimeoutMS: 10000,
+      serverSelectionTimeoutMS: 4000,
+      connectTimeoutMS: 4000,
     });
     isConnected = true;
     console.log('✅ Connected to MongoDB Atlas [book database]');
 
     // Check if collection is empty, and seed from local books.json if needed
-    const count = await Book.countDocuments();
-    console.log(`Current books in MongoDB Atlas: ${count}`);
-
-    if (count === 0 && fs.existsSync(LOCAL_JSON_FILE)) {
-      try {
+    try {
+      const count = await Book.countDocuments();
+      if (count === 0 && fs.existsSync(LOCAL_JSON_FILE)) {
         const localData = JSON.parse(fs.readFileSync(LOCAL_JSON_FILE, 'utf8'));
         if (Array.isArray(localData) && localData.length > 0) {
-          console.log(`Seeding ${localData.length} books into MongoDB Atlas...`);
           await Book.insertMany(localData);
           console.log('✅ Initial books seeded successfully into MongoDB Atlas!');
         }
-      } catch (seedErr) {
-        console.error('Seeding error:', seedErr);
       }
-    }
+    } catch (seedErr) {}
+
+    return true;
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
+    return false;
   }
 }
 
