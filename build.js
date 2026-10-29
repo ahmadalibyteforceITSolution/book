@@ -69,6 +69,10 @@ module.exports = app;
       if (fs.existsSync(dataSrc)) {
         fs.cpSync(dataSrc, path.join(target, 'data'), { recursive: true });
       }
+      const apiSrc = path.join(serverDir, 'api');
+      if (fs.existsSync(apiSrc)) {
+        fs.cpSync(apiSrc, path.join(target, 'api'), { recursive: true });
+      }
 
       // Create index.js, app.js that require ./server.js
       fs.writeFileSync(path.join(target, 'index.js'), entryCode);
