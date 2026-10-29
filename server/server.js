@@ -699,14 +699,70 @@ const possibleDists = [
   path.join(process.cwd(), 'dist'),
   process.cwd()
 ];
+
+let htmlContent = '';
 const CLIENT_DIST = possibleDists.find(d => fs.existsSync(path.join(d, 'index.html')));
 if (CLIENT_DIST) {
+  try {
+    htmlContent = fs.readFileSync(path.join(CLIENT_DIST, 'index.html'), 'utf8');
+  } catch (e) {}
   app.use(express.static(CLIENT_DIST));
-  app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api')) return next();
-    res.sendFile(path.join(CLIENT_DIST, 'index.html'));
-  });
+  app.use('/assets', express.static(path.join(CLIENT_DIST, 'assets')));
 }
+
+possibleDists.forEach(d => {
+  const aDir = path.join(d, 'assets');
+  if (fs.existsSync(aDir)) {
+    app.use('/assets', express.static(aDir));
+  }
+});
+
+// Guaranteed embedded HTML fallback ensuring Express never gives 404 on /
+const EMBEDDED_HTML = `<!doctype html>
+<html dir="rtl" lang="ur">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>اردو ای بکس | کتاب و سنت لائبریری</title>
+    <meta name="description" content="کتاب و سنت کی روشنی میں اردو اسلامی کتب کی سب سے بڑی مفت لائبریری، قرآن، حدیث، تفسیر، سیرت اور تربیت سے متعلق کتب کا ذخیرہ۔" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700;800&family=Amiri:wght@400;700&family=Noto+Nastaliq+Urdu:wght@400;600;700&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brandGreen: '#0c5332',
+              brandDark: '#073a22',
+              brandGold: '#d4af37',
+              brandGoldDark: '#b89726',
+            },
+            fontFamily: {
+              urdu: ['"Noto Sans Arabic"', '"Amiri"', 'sans-serif'],
+              serif: ['"Noto Nastaliq Urdu"', '"Amiri"', 'serif'],
+              sans: ['"Poppins"', 'sans-serif'],
+            }
+          }
+        }
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-CSGrGFGZ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-C-J-QPM9.css">
+  </head>
+  <body class="bg-[#f4f6f5] text-gray-800 antialiased selection:bg-[#0c5332] selection:text-white">
+    <div id="app"></div>
+  </body>
+</html>`;
+
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(htmlContent || EMBEDDED_HTML);
+});
 
 module.exports = app;
 
